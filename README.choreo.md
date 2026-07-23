@@ -126,10 +126,17 @@ DB_SSL_MODE=REQUIRED
 
 ```bash
 DB_TYPE=mysql
-DB_DSN=user:pass@tcp(host:3306)/openlist?parseTime=true&loc=Local&tls=true
+DB_DSN=user:pass@tcp(host:3306)/openlist?charset=utf8mb4&parseTime=True&loc=Local&tls=true
 ```
 
 设置了完整可用的 `DB_DSN` 时，仍建议保留 `DB_TYPE=mysql`。
+
+DSN 注意：
+
+- 必须是 Go MySQL 驱动格式：`user:pass@tcp(host:port)/dbname?params`
+- 建议带 `charset=utf8mb4&parseTime=True&loc=Local`
+- 托管库 SSL 常用 `tls=true`（或 `tls=skip-verify` 仅调试）
+- 密码含特殊字符时要做 URL 编码，或改用拆字段 `DB_USER`/`DB_PASS`…
 
 | 来源 | 说明 |
 |---|---|
@@ -288,7 +295,9 @@ Trivy **CRITICAL** 会导致 Choreo 构建失败：
 |---|---|
 | 构建 USER 校验失败 | 确认 Dockerfile 末尾 `USER 10014` |
 | Trivy CRITICAL | 升级基础包 / 换更新上游 tag / `.trivyignore` |
-| 启动报 DB / connection refused | 检查 `DB_*`、SSL、防火墙/白名单、主机名是否公网可达 |
+| 启动后很快 `terminated` / CrashLoop，控制台只有 `init logrus` | **旧镜像日志只写文件**。请更新到带 `--log-std` 的 entrypoint 后重部署，再看真正的 Fatal |
+| 启动报 `failed to connect database` | 查 `DB_DSN` / `DB_*`：主机可达性、端口、用户密码、库名、SSL（`tls=true` / `DB_SSL_MODE=REQUIRED`）、白名单 |
+| 启动报 DB / connection refused | 检查 `DB_*`、SSL、防火墙/白名单、主机名是否公网可达；Choreo 出站能否访问你的 MySQL |
 | 登录后 URL/资源错乱 | `SITE_URL` 是否为当前 HTTPS 域名且无尾 `/` |
 | 重启后会话全失效 | 固定 `JWT_SECRET` |
 | 重启后 admin 密码变了 | 设置 `OPENLIST_ADMIN_PASSWORD` |

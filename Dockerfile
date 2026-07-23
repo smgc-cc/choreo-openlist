@@ -46,7 +46,7 @@ ENV TZ=Asia/Shanghai \
     DB_TYPE=mysql \
     DB_PORT=3306 \
     DB_TABLE_PREFIX=x_ \
-    # 日志写 /tmp，避免撑爆
+    # 日志写 /tmp；入口仍会加 --log-std，保证 Fatal 出现在 Choreo 控制台
     LOG_ENABLE=true \
     LOG_NAME=/tmp/openlist/log/log.log \
     # 关闭 Aria2（lite 镜像本就没有；显式关掉避免误开）
