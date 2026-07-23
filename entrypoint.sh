@@ -12,7 +12,7 @@ BLEVE_DIR="${BLEVE_DIR:-/tmp/openlist/bleve}"
 HTTP_PORT="${HTTP_PORT:-5244}"
 
 KOMARI_SERVER="${KOMARI_SERVER:-}"
-KOMARI_SECRET="${KOMARI_SECRET:-}"
+KOMARI_ADKEY="${KOMARI_ADKEY:-}"
 
 # 导出给 openlist（官方 --no-prefix 直接读这些名）
 export TEMP_DIR BLEVE_DIR
@@ -75,20 +75,20 @@ fi
 
 # ==============================
 # 3. komari-agent（与 openwebui / deeix / lobehub 相同）
-#    KOMARI_SERVER + KOMARI_SECRET 都非空时启动
+#    KOMARI_SERVER + KOMARI_ADKEY 都非空时启动
 # ==============================
-if [ -n "$KOMARI_SERVER" ] && [ -n "$KOMARI_SECRET" ]; then
+if [ -n "$KOMARI_SERVER" ] && [ -n "$KOMARI_ADKEY" ]; then
     if [ -x /app/komari-agent ]; then
         echo "[Komari] Starting agent -> ${KOMARI_SERVER}"
         /app/komari-agent \
             -e "$KOMARI_SERVER" \
-            -t "$KOMARI_SECRET" \
+            --auto-discovery "$KOMARI_ADKEY" \
             --disable-auto-update >/dev/null 2>&1 &
     else
         echo "[Komari] WARN: /app/komari-agent missing or not executable, skip."
     fi
 else
-    echo "[Komari] Not configured (need KOMARI_SERVER + KOMARI_SECRET), skip."
+    echo "[Komari] Not configured (need KOMARI_SERVER + KOMARI_ADKEY), skip."
 fi
 
 # ==============================
