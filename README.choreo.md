@@ -7,7 +7,7 @@
 - `USER 10014`
 - 可写路径仅 **`/tmp`**（`--data /tmp/openlist/data`）
 - 业务库：**外部 MySQL**（`DB_TYPE=mysql` + `DB_*`）
-- 内嵌 **komari-agent**（`KOMARI_SERVER` + `KOMARI_ADKEY` 均非空时启动）
+- 内嵌 **komari-agent**（`KOMARI_SERVER` + `KOMARI_SECRET` 均非空时启动）
 - **无**本地 data 备份逻辑（状态以 MySQL 为准）
 
 上游当前锁定版本见 [README.md](./README.md)（`# Version`）。
@@ -101,32 +101,34 @@ openssl rand -base64 18   # OPENLIST_ADMIN_PASSWORD
 
 ### 2.2 外部 MySQL
 
-**拆字段方式（推荐）：**
+**拆字段方式（推荐，OpenList 会拼成 `tls=$DB_SSL_MODE`）：**
 
 ```bash
 DB_TYPE=mysql
-DB_HOST=your-mysql-host.example.com
-DB_PORT=3306
-DB_USER=openlist
+DB_HOST=gatewayXX.xxx.pingora.tidbcloud.com   # 例：TiDB Cloud
+DB_PORT=4000                                  # TiDB Cloud 常见 4000；普通 MySQL 3306
+DB_USER=...
 DB_PASS=...
 DB_NAME=openlist
 DB_TABLE_PREFIX=x_
-DB_SSL_MODE=REQUIRED
+DB_SSL_MODE=true                              # 强制 TLS（托管库必配）
 ```
 
-| `DB_SSL_MODE`（MySQL） | 说明 |
+| `DB_SSL_MODE`（写入 go-sql-driver `tls=`） | 说明 |
 |---|---|
-| 空 | 不启用特殊 SSL 模式（视驱动默认） |
-| `DISABLED` | 关闭 SSL |
-| `PREFERRED` | 优先 SSL |
-| `REQUIRED` | 要求 SSL（托管库常用） |
-| `VERIFY_CA` / `VERIFY_IDENTITY` | 校验证书 |
+| 空 / `false` | 不启用 TLS |
+| **`true`** | **启用 TLS 并校验证书（TiDB Cloud / 多数托管库用这个）** |
+| `skip-verify` | TLS 但不校验证书（仅排障） |
+| `preferred` | 优先 TLS，失败可回落明文（**TiDB Cloud 不允许明文，不要用**） |
+
+> 不要写 MySQL 客户端那套 `REQUIRED` / `VERIFY_CA`：OpenList 是 **原样** 塞进 `tls=` 参数，`REQUIRED` 不是 go-sql-driver 的合法值。
 
 **或使用 DSN（二选一）：**
 
 ```bash
 DB_TYPE=mysql
-DB_DSN=user:pass@tcp(host:3306)/openlist?charset=utf8mb4&parseTime=True&loc=Local&tls=true
+# TiDB Cloud 示例（端口多为 4000）
+DB_DSN=user:pass@tcp(gatewayXX.xxx.pingora.tidbcloud.com:4000)/openlist?charset=utf8mb4&parseTime=True&loc=Local&tls=true
 ```
 
 设置了完整可用的 `DB_DSN` 时，仍建议保留 `DB_TYPE=mysql`。
@@ -135,18 +137,19 @@ DSN 注意：
 
 - 必须是 Go MySQL 驱动格式：`user:pass@tcp(host:port)/dbname?params`
 - 建议带 `charset=utf8mb4&parseTime=True&loc=Local`
-- 托管库 SSL 常用 `tls=true`（或 `tls=skip-verify` 仅调试）
-- 密码含特殊字符时要做 URL 编码，或改用拆字段 `DB_USER`/`DB_PASS`…
+- **TiDB Cloud / 强制 SSL 的库必须带 `tls=true`**，否则报：`Connections using insecure transport are prohibited`
+- 密码含 `@ : / ? #` 等特殊字符时要 URL 编码，或改用拆字段 `DB_USER`/`DB_PASS`…
 
 | 来源 | 说明 |
 |---|---|
-| PlanetScale / TiDB Cloud / Railway / 自建等 | 注入 `DB_*`；公网或经 VPN 可达 Choreo 出站 |
+| **TiDB Cloud** | Serverless 强制 TLS；端口常见 **4000**；DSN 或 `DB_SSL_MODE=true` |
+| PlanetScale / Railway / 自建等 | 注入 `DB_*`；公网或经 VPN 可达 Choreo 出站 |
 | Choreo Managed MySQL | 同样注入连接信息；注意 SSL |
 
 **库侧建议：**
 
 - 单独库 + 最小权限用户（读写本库即可）
-- 强制 SSL（`DB_SSL_MODE=REQUIRED` 或 DSN `tls=true`）
+- 强制 SSL（`DB_SSL_MODE=true` 或 DSN `tls=true`）
 - 用托管侧的自动备份 / 快照（本镜像不做本地备份）
 - 确认 Choreo 数据平面出站能连到你的 MySQL 主机端口
 
@@ -175,12 +178,12 @@ DSN 注意：
 | 变量 | 说明 | 类型 |
 |---|---|---|
 | `KOMARI_SERVER` | Agent 入口 `-e`，如 `https://komari.example.com`（**不要**写 `wss://`） | Config |
-| `KOMARI_ADKEY` | Agent 自动发现密钥 `--auto-discovery`，在 Komari 面板创建/复制 | **Secret** |
+| `KOMARI_SECRET` | Agent token `-t`，在 Komari 面板创建/复制 | **Secret** |
 
 启动命令等价于：
 
 ```bash
-/app/komari-agent -e "$KOMARI_SERVER" --auto-discovery "$KOMARI_ADKEY" --disable-auto-update
+/app/komari-agent -e "$KOMARI_SERVER" -t "$KOMARI_SECRET" --disable-auto-update
 ```
 
 注意：
@@ -223,12 +226,12 @@ DB_PORT=3306
 DB_USER=openlist
 DB_PASS=...
 DB_NAME=openlist
-DB_SSL_MODE=REQUIRED
+DB_SSL_MODE=true
 DB_TABLE_PREFIX=x_
 
 # Komari Agent（监控本容器；不配则跳过）
 KOMARI_SERVER=https://komari.example.com
-KOMARI_ADKEY=...
+KOMARI_SECRET=...
 ```
 
 ---
@@ -296,13 +299,14 @@ Trivy **CRITICAL** 会导致 Choreo 构建失败：
 | 构建 USER 校验失败 | 确认 Dockerfile 末尾 `USER 10014` |
 | Trivy CRITICAL | 升级基础包 / 换更新上游 tag / `.trivyignore` |
 | 启动后很快 `terminated` / CrashLoop，控制台只有 `init logrus` | **旧镜像日志只写文件**。请更新到带 `--log-std` 的 entrypoint 后重部署，再看真正的 Fatal |
-| 启动报 `failed to connect database` | 查 `DB_DSN` / `DB_*`：主机可达性、端口、用户密码、库名、SSL（`tls=true` / `DB_SSL_MODE=REQUIRED`）、白名单 |
+| 启动报 `failed to connect database` | 查 `DB_DSN` / `DB_*`：主机可达性、端口、用户密码、库名、SSL（**`tls=true` / `DB_SSL_MODE=true`**）、白名单 |
+| `Connections using insecure transport are prohibited`（TiDB Cloud） | DSN 缺少 `tls=true`，或拆字段未设 `DB_SSL_MODE=true`；不要用 `REQUIRED` |
 | 启动报 DB / connection refused | 检查 `DB_*`、SSL、防火墙/白名单、主机名是否公网可达；Choreo 出站能否访问你的 MySQL |
 | 登录后 URL/资源错乱 | `SITE_URL` 是否为当前 HTTPS 域名且无尾 `/` |
 | 重启后会话全失效 | 固定 `JWT_SECRET` |
 | 重启后 admin 密码变了 | 设置 `OPENLIST_ADMIN_PASSWORD` |
 | 页面可开但大上传失败 | 受 Web App 请求体限制；改用网盘客户端/直传 |
-| Komari 面板无节点 | 确认 `KOMARI_SERVER` 与 `KOMARI_ADKEY` **都**已设置；`-e` 用 `https://` 长/短基址（按你 Komari 边缘模式），不要 `wss://`；Choreo 出站可访问 Komari |
+| Komari 面板无节点 | 确认 `KOMARI_SERVER` 与 `KOMARI_SECRET` **都**已设置；`-e` 用 `https://` 长/短基址（按你 Komari 边缘模式），不要 `wss://`；Choreo 出站可访问 Komari |
 | 日志无 `[Komari] Starting agent...` | 变量为空或二进制不可执行；看是否打印 `Not configured, skip.` |
 
 ---
