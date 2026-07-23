@@ -7,7 +7,7 @@
 - `USER 10014`
 - 可写路径仅 **`/tmp`**（`--data /tmp/openlist/data`）
 - 业务库：**外部 MySQL**（`DB_TYPE=mysql` + `DB_*`）
-- 内嵌 **komari-agent**（`KOMARI_SERVER` + `KOMARI_SECRET` 均非空时启动）
+- 内嵌 **komari-agent**（`KOMARI_SERVER` + `KOMARI_ADKEY` 均非空时启动）
 - **无**本地 data 备份逻辑（状态以 MySQL 为准）
 
 上游当前锁定版本见 [README.md](./README.md)（`# Version`）。
@@ -175,12 +175,12 @@ DSN 注意：
 | 变量 | 说明 | 类型 |
 |---|---|---|
 | `KOMARI_SERVER` | Agent 入口 `-e`，如 `https://komari.example.com`（**不要**写 `wss://`） | Config |
-| `KOMARI_SECRET` | Agent token `-t`，在 Komari 面板创建/复制 | **Secret** |
+| `KOMARI_ADKEY` | Agent 自动发现密钥 `--auto-discovery`，在 Komari 面板创建/复制 | **Secret** |
 
 启动命令等价于：
 
 ```bash
-/app/komari-agent -e "$KOMARI_SERVER" -t "$KOMARI_SECRET" --disable-auto-update
+/app/komari-agent -e "$KOMARI_SERVER" --auto-discovery "$KOMARI_ADKEY" --disable-auto-update
 ```
 
 注意：
@@ -228,7 +228,7 @@ DB_TABLE_PREFIX=x_
 
 # Komari Agent（监控本容器；不配则跳过）
 KOMARI_SERVER=https://komari.example.com
-KOMARI_SECRET=...
+KOMARI_ADKEY=...
 ```
 
 ---
@@ -302,7 +302,7 @@ Trivy **CRITICAL** 会导致 Choreo 构建失败：
 | 重启后会话全失效 | 固定 `JWT_SECRET` |
 | 重启后 admin 密码变了 | 设置 `OPENLIST_ADMIN_PASSWORD` |
 | 页面可开但大上传失败 | 受 Web App 请求体限制；改用网盘客户端/直传 |
-| Komari 面板无节点 | 确认 `KOMARI_SERVER` 与 `KOMARI_SECRET` **都**已设置；`-e` 用 `https://` 长/短基址（按你 Komari 边缘模式），不要 `wss://`；Choreo 出站可访问 Komari |
+| Komari 面板无节点 | 确认 `KOMARI_SERVER` 与 `KOMARI_ADKEY` **都**已设置；`-e` 用 `https://` 长/短基址（按你 Komari 边缘模式），不要 `wss://`；Choreo 出站可访问 Komari |
 | 日志无 `[Komari] Starting agent...` | 变量为空或二进制不可执行；看是否打印 `Not configured, skip.` |
 
 ---
