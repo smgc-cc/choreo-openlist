@@ -1,0 +1,248 @@
+name: Auto Update Choreo OpenList Version
+ 
+on:
+  schedule:
+    # 每天 UTC 00:00 (北京时间 08:00) 检查 OpenListTeam/OpenList 最新 release。
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+ 
+permissions:
+  contents: write
+  actions: write
+ 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+ 
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+ 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+ 
+      - name: Check, update and notify
+        id: update_script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+        run: |
+          python - <<'PY'
+          import html
+          import json
+          import os
+          import re
+          import sys
+          import urllib.request
+ 
+          README = 'README.md'
+          DOCKERFILE = 'Dockerfile'
+          API_URL = 'https://api.github.com/repos/OpenListTeam/OpenList/releases/latest'
+          # 本仓库固定使用 lite 镜像后缀（PaaS / 有限临时盘）
+          IMAGE_SUFFIX = '-lite'
+          # Dockerfile: ARG OPENLIST_TAG=vX.Y.Z-lite
+          OPENLIST_TAG_RE = re.compile(
+              r'(ARG\s+OPENLIST_TAG=)(v?[0-9][^\s#]*)',
+              re.MULTILINE,
+          )
+ 
+          def strip_lite(version: str) -> str:
+              version = version.strip()
+              if version.endswith(IMAGE_SUFFIX):
+                  return version[: -len(IMAGE_SUFFIX)]
+              return version
+ 
+          def with_lite(version: str) -> str:
+              version = strip_lite(version)
+              return f'{version}{IMAGE_SUFFIX}'
+ 
+          def semver_parts(version: str):
+              version = strip_lite(version).strip().lstrip('v')
+              core = version.split('-', 1)[0]
+              parts = []
+              for part in core.split('.'):
+                  try:
+                      parts.append(int(part))
+                  except ValueError:
+                      parts.append(0)
+              return parts
+ 
+          def send_telegram(token, chat_id, version, body):
+              if not token or not chat_id:
+                  print('::warning::Telegram secrets not set.')
+                  return
+ 
+              safe_body = html.escape(body or '')
+              pattern = r'\[([^\]]+)\]\((https?://[^)]+)\)'
+ 
+              def link_replacer(match):
+                  text = html.escape(match.group(1))
+                  url = html.escape(match.group(2), quote=True)
+                  return f'<a href="{url}">{text}</a>'
+ 
+              body_with_links = re.sub(pattern, link_replacer, safe_body)
+              text_content = (
+                  f'<b>OpenList Choreo upstream update detected</b>\n\n'
+                  f'<b>New Version:</b> {html.escape(version)}\n\n'
+                  f'{body_with_links}'
+              )
+ 
+              if len(text_content) > 4000:
+                  text_content = text_content[:4000] + '\n...(content truncated)...'
+ 
+              url = f'https://api.telegram.org/bot{token}/sendMessage'
+              payload = {
+                  'chat_id': chat_id,
+                  'text': text_content,
+                  'parse_mode': 'HTML',
+                  'disable_web_page_preview': True,
+              }
+              headers = {'Content-Type': 'application/json'}
+ 
+              try:
+                  req = urllib.request.Request(
+                      url, data=json.dumps(payload).encode(), headers=headers
+                  )
+                  urllib.request.urlopen(req)
+                  print('Telegram notification sent.')
+              except Exception as exc:
+                  print(f'::warning::Telegram notification failed: {exc}')
+ 
+          try:
+              if not os.path.exists(README):
+                  print(f'::error::{README} not found')
+                  sys.exit(1)
+ 
+              with open(README, 'r', encoding='utf-8') as f:
+                  content = f.read()
+              original_content = content
+ 
+              match = re.search(r'(?m)^# Version\s*\n\s*\n([^\s]+)', content)
+              if not match:
+                  print('::warning::Cannot find current version in README.md.')
+                  sys.exit(0)
+              local_version = match.group(1).strip()
+              print(f'Local Version: {local_version}')
+ 
+              req = urllib.request.Request(API_URL)
+              token = os.environ.get('GITHUB_TOKEN')
+              if token:
+                  req.add_header('Authorization', f'token {token}')
+              req.add_header('Accept', 'application/vnd.github+json')
+ 
+              with urllib.request.urlopen(req) as response:
+                  data = json.loads(response.read().decode())
+              remote_tag = data['tag_name']  # e.g. v4.2.3
+              remote_body = data.get('body') or ''
+              remote_version = with_lite(remote_tag)  # e.g. v4.2.3-lite
+              print(f'Remote Tag: {remote_tag}')
+              print(f'Desired Image Tag: {remote_version}')
+ 
+              desired_releases = (
+                  f'Upstream OpenList `{remote_tag}` (lite image for PaaS / limited ephemeral storage).\n'
+                  f'\n'
+                  f'- Upstream: https://github.com/OpenListTeam/OpenList/releases/tag/{remote_tag}\n'
+                  f'- Docs: https://doc.oplist.org/\n'
+                  f'\n'
+                  f'部署说明见 [README.choreo.md](./README.choreo.md)。'
+              )
+              if remote_body.strip():
+                  desired_releases = (
+                      f'Upstream OpenList `{remote_tag}` (lite image for PaaS / limited ephemeral storage).\n'
+                      f'\n'
+                      f'- Upstream: https://github.com/OpenListTeam/OpenList/releases/tag/{remote_tag}\n'
+                      f'- Docs: https://doc.oplist.org/\n'
+                      f'\n'
+                      f'{remote_body.strip()}\n'
+                      f'\n'
+                      f'部署说明见 [README.choreo.md](./README.choreo.md)。'
+                  )
+ 
+              version_is_newer = semver_parts(remote_tag) > semver_parts(local_version)
+              if not version_is_newer:
+                  print('Local version is up to date.')
+                  sys.exit(0)
+ 
+              content = re.sub(
+                  r'(?m)(^# Version\s*\n\s*\n)([^\s]+)',
+                  lambda m: m.group(1) + remote_version,
+                  content,
+                  count=1,
+              )
+              content = re.sub(
+                  r'(?ms)(^# Releases\s*\n\s*\n).*\Z',
+                  lambda m: m.group(1) + desired_releases + '\n',
+                  content,
+                  count=1,
+              )
+ 
+              dockerfile_updated = False
+              if os.path.exists(DOCKERFILE):
+                  with open(DOCKERFILE, 'r', encoding='utf-8') as f:
+                      dockerfile = f.read()
+                  new_dockerfile, n = OPENLIST_TAG_RE.subn(
+                      lambda m: m.group(1) + remote_version,
+                      dockerfile,
+                      count=1,
+                  )
+                  if n:
+                      with open(DOCKERFILE, 'w', encoding='utf-8') as f:
+                          f.write(new_dockerfile)
+                      dockerfile_updated = True
+                      print(f'Dockerfile OPENLIST_TAG -> {remote_version}')
+                  else:
+                      print('::warning::ARG OPENLIST_TAG=... not found in Dockerfile')
+ 
+              if content == original_content and not dockerfile_updated:
+                  print('Files already up to date.')
+                  sys.exit(0)
+ 
+              with open(README, 'w', encoding='utf-8') as f:
+                  f.write(content)
+ 
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as gh_out:
+                  gh_out.write('updated=true\n')
+                  gh_out.write(f'new_version={remote_version}\n')
+ 
+              send_telegram(
+                  os.environ.get('TELEGRAM_TOKEN'),
+                  os.environ.get('TELEGRAM_TO'),
+                  remote_version,
+                  remote_body,
+              )
+          except Exception as exc:
+              print(f'::error::Script failed: {exc}')
+              sys.exit(1)
+          PY
+ 
+      - name: Commit and push changes
+        if: steps.update_script.outputs.updated == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md Dockerfile
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "docs: update to ${{ steps.update_script.outputs.new_version }}"
+          git push
+ 
+  cleanup-runs:
+    runs-on: ubuntu-latest
+    needs: check-and-update
+    if: always()
+    steps:
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 7
+          keep_minimum_runs: 6
+ 
