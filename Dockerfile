@@ -3,7 +3,7 @@
 # 基于官方镜像：单端口 5244 + 外部 MySQL + /tmp 可写
 # ==========================================
 # 版本锁定见 README.md # Version
-ARG OPENLIST_TAG=v4.2.5-lite
+ARG OPENLIST_TAG=v4.2.6-lite
 FROM openlistteam/openlist:${OPENLIST_TAG}
 
 USER root
